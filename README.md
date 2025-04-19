@@ -1,0 +1,4 @@
+- cp config.yml.example config.yml
+- Configure config.yml
+- snap install yq
+- snap install restic --classic
