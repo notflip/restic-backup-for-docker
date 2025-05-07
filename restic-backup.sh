@@ -1,13 +1,25 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Add standard paths to ensure commands are found
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:$PATH"
+
+# Set working directory explicitly (helpful for cron)
+cd "$(dirname "$0")" || {
+  echo "ERROR: Failed to change to script directory" >&2
+  exit 1
+}
+
+# Define binaries with full paths
 YQ_BIN="/snap/bin/yq"
+RESTIC_BIN="$(command -v restic || echo "/snap/bin/restic")"
 
 log() {
   echo "$(date +'%Y-%m-%d %H:%M:%S') $1"
 }
 
 log "Starting backup script..."
+log "Working directory: $(pwd)"
 
 # ── Configuration ───────────────────────────────────────────────────────────
 CONFIG="./config.yml"
@@ -30,6 +42,9 @@ export AWS_ACCESS_KEY_ID=$($YQ_BIN '.restic.aws.access_key_id' "$CONFIG")
 export AWS_SECRET_ACCESS_KEY=$($YQ_BIN '.restic.aws.secret_access_key' "$CONFIG")
 export AWS_DEFAULT_REGION=$($YQ_BIN '.restic.aws.region' "$CONFIG" || echo "us-east-1")
 export RESTIC_LOCK_TIMEOUT=$($YQ_BIN '.restic.lock_timeout' "$CONFIG" || echo "30")
+
+# Lower memory usage for pruning
+export GOGC=20
 
 VOL_BASE=$($YQ_BIN '.restic.volume_base_path' "$CONFIG")
 KEEP_DAILY=$($YQ_BIN '.retention.keep_daily' "$CONFIG" || echo "7")
@@ -75,7 +90,7 @@ ping_health() {
   fi
 
   log "Pinging healthcheck: $status"
-  curl -fsS "$url" >/dev/null 2>&1
+  curl -fsS --max-time 10 "$url" >/dev/null 2>&1 || log "WARNING: Failed to ping healthcheck"
 }
 
 # ── Start backup ────────────────────────────────────────────────────────────
@@ -86,9 +101,8 @@ if [[ -n "$HC_URL" ]]; then
 fi
 
 log "Looking for restic binary..."
-RESTIC_BIN=$(command -v restic || echo "")
-if [[ -z "$RESTIC_BIN" ]]; then
-  log "ERROR: restic command not found"
+if [[ ! -x "$RESTIC_BIN" ]]; then
+  log "ERROR: restic command not found at $RESTIC_BIN"
   [[ -n "$HC_URL" ]] && ping_health fail
   exit 1
 fi
@@ -142,16 +156,25 @@ for project in "${PROJECTS[@]}"; do
   sleep 2
 
   log "Applying retention policy for $project"
+  # Split forget and prune operations to reduce memory usage
   if ! "$RESTIC_BIN" forget \
         --tag "$project" \
         --keep-daily "$KEEP_DAILY" \
         --keep-weekly "$KEEP_WEEKLY" \
-        --keep-monthly "$KEEP_MONTHLY" \
-        --prune; then
-    log "   !! Prune failed for $project"
+        --keep-monthly "$KEEP_MONTHLY"; then
+    log "   !! Forget operation failed for $project"
     exit_code=1
   else
-    log "Retention policy applied successfully for $project"
+    log "Forget operation completed successfully for $project"
+    
+    # Now run prune as a separate operation
+    log "Starting prune operation for $project"
+    if ! "$RESTIC_BIN" prune; then
+      log "   !! Prune failed for $project"
+      exit_code=1
+    else
+      log "Prune completed successfully for $project"
+    fi
   fi
 
   log "-- Completed $project"
