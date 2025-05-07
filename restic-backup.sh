@@ -1,91 +1,69 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd "$(dirname "$0")"
 
-# Add console output from the start
-echo "Starting backup script..."
+YQ_BIN="/snap/bin/yq"
+
+log() {
+  echo "$(date +'%Y-%m-%d %H:%M:%S') $1"
+}
+
+log "Starting backup script..."
 
 # ── Configuration ───────────────────────────────────────────────────────────
 CONFIG="./config.yml"
 
-# Check if config file exists
 if [[ ! -f "$CONFIG" ]]; then
-  echo "ERROR: Configuration file not found: $CONFIG"
+  log "ERROR: Configuration file not found: $CONFIG"
   exit 1
 fi
 
-echo "Reading configuration from $CONFIG"
+log "Reading configuration from $CONFIG"
 
-# Load settings with echo for debugging
-echo "Reading Restic repository..."
-RESTIC_REPOSITORY=$(yq '.restic.repository' "$CONFIG")
+log "Reading Restic repository..."
+RESTIC_REPOSITORY=$($YQ_BIN '.restic.repository' "$CONFIG")
 export RESTIC_REPOSITORY
-echo "Repository: $RESTIC_REPOSITORY"
+log "Repository: $RESTIC_REPOSITORY"
 
-echo "Reading credentials and settings..."
-export RESTIC_PASSWORD=$(yq '.restic.password' "$CONFIG")
-export AWS_ACCESS_KEY_ID=$(yq '.restic.aws.access_key_id' "$CONFIG")
-export AWS_SECRET_ACCESS_KEY=$(yq '.restic.aws.secret_access_key' "$CONFIG")
-export AWS_DEFAULT_REGION=$(yq '.restic.aws.region' "$CONFIG" || echo "us-east-1")
-export RESTIC_LOCK_TIMEOUT=$(yq '.restic.lock_timeout' "$CONFIG" || echo "30")
+log "Reading credentials and settings..."
+export RESTIC_PASSWORD=$($YQ_BIN '.restic.password' "$CONFIG")
+export AWS_ACCESS_KEY_ID=$($YQ_BIN '.restic.aws.access_key_id' "$CONFIG")
+export AWS_SECRET_ACCESS_KEY=$($YQ_BIN '.restic.aws.secret_access_key' "$CONFIG")
+export AWS_DEFAULT_REGION=$($YQ_BIN '.restic.aws.region' "$CONFIG" || echo "us-east-1")
+export RESTIC_LOCK_TIMEOUT=$($YQ_BIN '.restic.lock_timeout' "$CONFIG" || echo "30")
 
-# Directories and retention
-LOG_DIR_BASE=$(yq '.restic.log_dir' "$CONFIG" || echo "/var/log")
-VOL_BASE=$(yq '.restic.volume_base_path' "$CONFIG")
-KEEP_DAILY=$(yq '.retention.keep_daily' "$CONFIG" || echo "7")
-KEEP_WEEKLY=$(yq '.retention.keep_weekly' "$CONFIG" || echo "4")
-KEEP_MONTHLY=$(yq '.retention.keep_monthly' "$CONFIG" || echo "12")
+VOL_BASE=$($YQ_BIN '.restic.volume_base_path' "$CONFIG")
+KEEP_DAILY=$($YQ_BIN '.retention.keep_daily' "$CONFIG" || echo "7")
+KEEP_WEEKLY=$($YQ_BIN '.retention.keep_weekly' "$CONFIG" || echo "4")
+KEEP_MONTHLY=$($YQ_BIN '.retention.keep_monthly' "$CONFIG" || echo "12")
 
-# Get healthchecks URL
-echo "Reading healthchecks URL..."
-HC_URL=$(yq '.healthchecks_url' "$CONFIG")
-echo "Raw HC_URL: '$HC_URL'"
+log "Reading healthchecks URL..."
+HC_URL=$($YQ_BIN '.healthchecks_url' "$CONFIG")
+log "Raw HC_URL: '$HC_URL'"
 
-# Safety check and cleanup for URL
 if [[ -z "$HC_URL" ]]; then
-  echo "WARNING: No healthchecks URL found in config, continuing without healthchecks"
+  log "WARNING: No healthchecks URL found in config, continuing without healthchecks"
   HC_URL=""
 else
-  # Remove trailing slashes and check format
   HC_URL="${HC_URL%/}"
-  echo "Processed HC_URL: '$HC_URL'"
-  
-  # Basic URL validation
+  log "Processed HC_URL: '$HC_URL'"
+
   if [[ ! "$HC_URL" =~ ^https?:// ]]; then
-    echo "ERROR: Healthchecks URL doesn't start with http:// or https://"
+    log "ERROR: Healthchecks URL doesn't start with http:// or https://"
     exit 1
   fi
 fi
 
-# Read project names
-echo "Reading project list..."
-mapfile -t PROJECTS < <(yq '.projects | keys | .[]' "$CONFIG")
-echo "Found projects: ${PROJECTS[*]}"
+log "Reading project list..."
+mapfile -t PROJECTS < <($YQ_BIN '.projects | keys | .[]' "$CONFIG")
+log "Found projects: ${PROJECTS[*]}"
 
-# ── Prepare monthly log file ─────────────────────────────────────────────────
-MONTH=$(date +'%Y-%m')
-LOG_DIR="$LOG_DIR_BASE/$MONTH"
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/backup.log"
-echo "Logging to: $LOG_FILE"
-
-# ── Logging helper ─────────────────────────────────────────────────────────
-log() { 
-  local msg="$(timestamp) $1"
-  echo "$msg" >> "$LOG_FILE"
-  echo "$msg" # Also output to console
-}
-
-timestamp() { date +'%Y-%m-%d %H:%M:%S'; }
-
-# ── Healthchecks ping helper ───────────────────────────────────────────────
+# ── Healthchecks ping helper ─────────────────────────────────────────────────
 ping_health() {
   [[ -z "$HC_URL" ]] && return 0
-  
+
   local status="$1"
   local url
-  
-  # Construct URLs manually without string interpolation
+
   if [[ "$status" == "start" ]]; then
     url="$HC_URL/start"
   elif [[ "$status" == "fail" ]]; then
@@ -95,50 +73,41 @@ ping_health() {
   else
     url="$HC_URL/$status"
   fi
-  
+
   log "Pinging healthcheck: $status"
-  
-  # Simplified curl command without verbose output
-  curl -fsS "$url" >> "$LOG_FILE" 2>&1
-  return 0
+  curl -fsS "$url" >/dev/null 2>&1
 }
 
-# ── Start healthchecks ping ─────────────────────────────────────────────────
+# ── Start backup ────────────────────────────────────────────────────────────
 log "==== Starting backup ===="
 
-# Only ping if we have a valid URL
 if [[ -n "$HC_URL" ]]; then
   ping_health start || log "Healthcheck start ping failed, continuing anyway"
 fi
 
-# Check for restic binary
-echo "Looking for restic binary..."
+log "Looking for restic binary..."
 RESTIC_BIN=$(command -v restic || echo "")
 if [[ -z "$RESTIC_BIN" ]]; then
   log "ERROR: restic command not found"
   [[ -n "$HC_URL" ]] && ping_health fail
   exit 1
 fi
-echo "Found restic at: $RESTIC_BIN"
+log "Found restic at: $RESTIC_BIN"
 
-# Clear all stale locks at the beginning
 log "Checking for and removing any stale locks"
-"$RESTIC_BIN" unlock >> "$LOG_FILE" 2>&1 || log "WARNING: Failed to clear locks, but will continue"
+"$RESTIC_BIN" unlock || log "WARNING: Failed to clear locks, but will continue"
 
 exit_code=0
 
-# ── Backup loop ───────────────────────────────────────────────────────────────
+# ── Backup loop ────────────────────────────────────────────────────────────
 for project in "${PROJECTS[@]}"; do
   log "-- Project: $project"
-  
-  # Read volumes for project
-  echo "Reading volumes for $project..."
-  # Explicit YQ v4 syntax
-  mapfile -t vols < <(yq ".projects.[\"$project\"].volumes[]" "$CONFIG" 2>/dev/null || echo "")
-  
-  echo "Found volumes for $project: ${vols[*]}"
-  
-  # Check if we got any volumes
+
+  log "Reading volumes for $project..."
+  mapfile -t vols < <($YQ_BIN ".projects.[\"$project\"].volumes[]" "$CONFIG" 2>/dev/null || echo "")
+
+  log "Found volumes for $project: ${vols[*]}"
+
   if [[ ${#vols[@]} -eq 0 ]]; then
     log "   !! No volumes defined for $project"
     continue
@@ -149,7 +118,7 @@ for project in "${PROJECTS[@]}"; do
     dir="$VOL_BASE/$v/_data"
     if [[ -d "$dir" ]]; then
       paths+=("$dir")
-      echo "Found valid path: $dir"
+      log "Found valid path: $dir"
     else
       log "   !! Missing volume path: $dir"
     fi
@@ -160,29 +129,25 @@ for project in "${PROJECTS[@]}"; do
     continue
   fi
 
-  # Run restic backup
   log "Starting backup for $project with paths: ${paths[*]}"
-  if ! "$RESTIC_BIN" backup "${paths[@]}" --tag "$project" >> "$LOG_FILE" 2>&1; then
+  if ! "$RESTIC_BIN" backup "${paths[@]}" --tag "$project"; then
     log "   !! Backup failed for $project"
     exit_code=1
     continue
   fi
 
-  # Remove stale locks
   log "Unlocking repository after backup for $project"
-  "$RESTIC_BIN" unlock --remove-all >> "$LOG_FILE" 2>&1 || log "WARNING: Failed to clear locks"
-  
-  # Wait a moment to ensure locks are released
+  "$RESTIC_BIN" unlock --remove-all || log "WARNING: Failed to clear locks"
+
   sleep 2
 
-  # Apply retention policy
   log "Applying retention policy for $project"
   if ! "$RESTIC_BIN" forget \
         --tag "$project" \
         --keep-daily "$KEEP_DAILY" \
         --keep-weekly "$KEEP_WEEKLY" \
         --keep-monthly "$KEEP_MONTHLY" \
-        --prune >> "$LOG_FILE" 2>&1; then
+        --prune; then
     log "   !! Prune failed for $project"
     exit_code=1
   else
@@ -192,7 +157,7 @@ for project in "${PROJECTS[@]}"; do
   log "-- Completed $project"
 done
 
-# ── Finish ───────────────────────────────────────────────────────────────────
+# ── Finish ────────────────────────────────────────────────────────────
 log "==== Backup finished with status: $([ $exit_code -eq 0 ] && echo 'SUCCESS' || echo 'FAILED') ===="
 
 if [[ -n "$HC_URL" ]]; then
@@ -203,5 +168,5 @@ if [[ -n "$HC_URL" ]]; then
   fi
 fi
 
-echo "Backup script completed with exit code: $exit_code"
+log "Backup script completed with exit code: $exit_code"
 exit $exit_code
