@@ -7,7 +7,7 @@ restic:
   aws:
     access_key_id: ""
     secret_access_key: ""
-  log_dir: "./logs"
+  log_dir: "/var/logs"
   volume_base_path: "/var/lib/docker/volumes"
   lock_timeout: 30
 

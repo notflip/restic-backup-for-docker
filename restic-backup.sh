@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+cd "$(dirname "$0")"
 
 # Add console output from the start
 echo "Starting backup script..."
@@ -29,7 +30,7 @@ export AWS_DEFAULT_REGION=$(yq '.restic.aws.region' "$CONFIG" || echo "us-east-1
 export RESTIC_LOCK_TIMEOUT=$(yq '.restic.lock_timeout' "$CONFIG" || echo "30")
 
 # Directories and retention
-LOG_DIR_BASE=$(yq '.restic.log_dir' "$CONFIG" || echo "./logs")
+LOG_DIR_BASE=$(yq '.restic.log_dir' "$CONFIG" || echo "/var/log")
 VOL_BASE=$(yq '.restic.volume_base_path' "$CONFIG")
 KEEP_DAILY=$(yq '.retention.keep_daily' "$CONFIG" || echo "7")
 KEEP_WEEKLY=$(yq '.retention.keep_weekly' "$CONFIG" || echo "4")
