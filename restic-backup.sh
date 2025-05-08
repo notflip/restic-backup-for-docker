@@ -43,9 +43,6 @@ export AWS_SECRET_ACCESS_KEY=$($YQ_BIN '.restic.aws.secret_access_key' "$CONFIG"
 export AWS_DEFAULT_REGION=$($YQ_BIN '.restic.aws.region' "$CONFIG" || echo "us-east-1")
 export RESTIC_LOCK_TIMEOUT=$($YQ_BIN '.restic.lock_timeout' "$CONFIG" || echo "30")
 
-# Lower memory usage for pruning
-export GOGC=20
-
 VOL_BASE=$($YQ_BIN '.restic.volume_base_path' "$CONFIG")
 KEEP_DAILY=$($YQ_BIN '.retention.keep_daily' "$CONFIG" || echo "7")
 KEEP_WEEKLY=$($YQ_BIN '.retention.keep_weekly' "$CONFIG" || echo "4")
@@ -96,14 +93,12 @@ ping_health() {
 # ── Start backup ────────────────────────────────────────────────────────────
 log "==== Starting backup ===="
 
-if [[ -n "$HC_URL" ]]; then
-  ping_health start || log "Healthcheck start ping failed, continuing anyway"
-fi
+ping_health start || log "Healthcheck start ping failed, continuing anyway"
 
 log "Looking for restic binary..."
 if [[ ! -x "$RESTIC_BIN" ]]; then
   log "ERROR: restic command not found at $RESTIC_BIN"
-  [[ -n "$HC_URL" ]] && ping_health fail
+  ping_health fail
   exit 1
 fi
 log "Found restic at: $RESTIC_BIN"
@@ -156,7 +151,6 @@ for project in "${PROJECTS[@]}"; do
   sleep 2
 
   log "Applying retention policy for $project"
-  # Split forget and prune operations to reduce memory usage
   if ! "$RESTIC_BIN" forget \
         --tag "$project" \
         --keep-daily "$KEEP_DAILY" \
@@ -166,15 +160,6 @@ for project in "${PROJECTS[@]}"; do
     exit_code=1
   else
     log "Forget operation completed successfully for $project"
-    
-    # Now run prune as a separate operation
-    log "Starting prune operation for $project"
-    if ! "$RESTIC_BIN" prune; then
-      log "   !! Prune failed for $project"
-      exit_code=1
-    else
-      log "Prune completed successfully for $project"
-    fi
   fi
 
   log "-- Completed $project"
