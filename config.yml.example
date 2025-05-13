@@ -2,7 +2,7 @@
 
 # Global Restic & AWS settings
 restic:
-  repository: ""
+  repository: "s3:fsn1.your-objectstorage.com/studiomonty/SERVER_IDENTIFIER"
   password: ""
   aws:
     access_key_id: ""
