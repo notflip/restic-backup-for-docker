@@ -35,5 +35,5 @@ export AWS_DEFAULT_REGION=$(/snap/bin/yq '.restic.aws.region' "$CONFIG" || echo 
 
 echo "Using repository: $RESTIC_REPOSITORY"
 
-# Run restic
-"$RESTIC_BIN"
+# Run restic with the command passed as arguments
+"$RESTIC_BIN" "$@"
