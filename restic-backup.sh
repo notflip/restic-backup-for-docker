@@ -1,4 +1,3 @@
-#!/usr/bin/env bash
 set -euo pipefail
 
 # Detect server identifier (hostname or custom identifier)
@@ -46,12 +45,23 @@ log() {
   echo "$(date +'%Y-%m-%d %H:%M:%S') [$SERVER_ID] $1"
 }
 
+# Memory management enhancements
+export GOGC=20                # Aggressive garbage collection
+export GOMAXPROCS=1           # Limit CPU usage
+export RESTIC_CACHE_DIR="/tmp/restic-cache-${SERVER_ID}"  # Dedicated cache directory
+export GODEBUG=madvdontneed=1 # Improve memory release patterns
+
+# Create and clean cache directory
+mkdir -p "$RESTIC_CACHE_DIR"
+find "$RESTIC_CACHE_DIR" -type f -mtime +7 -delete 2>/dev/null || true
+
 # Acquire the lock
 lock
 
 log "Starting backup script..."
 log "Working directory: $(pwd)"
 log "Server Identifier: $SERVER_ID"
+log "Memory optimization: GOGC=$GOGC, GOMAXPROCS=$GOMAXPROCS"
 
 # ── Configuration ───────────────────────────────────────────────────────────
 CONFIG="./config.yml"
@@ -83,9 +93,6 @@ export AWS_ACCESS_KEY_ID
 export AWS_SECRET_ACCESS_KEY
 export AWS_DEFAULT_REGION
 export RESTIC_LOCK_TIMEOUT
-
-# Reduce memory usage for Go garbage collection
-export GOGC=20
 
 # Read configuration values
 VOL_BASE=$($YQ_BIN '.restic.volume_base_path' "$CONFIG")
@@ -198,13 +205,33 @@ for project in "${PROJECTS[@]}"; do
     continue
   fi
 
-  # Perform backup
+  # Clear system caches to free up memory before backup
+  sync
+  log "Freeing system caches before backup"
+  if [[ -w /proc/sys/vm/drop_caches ]]; then
+    echo 1 > /proc/sys/vm/drop_caches 2>/dev/null || true
+  fi
+
+  # Perform backup with timeout and memory constraints
   log "Starting backup for $project with paths: ${paths[*]}"
-  if ! "$RESTIC_BIN" backup "${paths[@]}" --tag "$project" --tag "$SERVER_ID"; then
+  if ! timeout -k 180 3600 "$RESTIC_BIN" backup "${paths[@]}" \
+       --tag "$project" \
+       --tag "$SERVER_ID" \
+       --limit-upload 1024 \
+       --one-file-system; then
     log "   !! Backup failed for $project"
     exit_code=1
+    
+    # Ensure restic process is completely stopped
+    pkill -f "$RESTIC_BIN" || true
+    sleep 5
+    
     continue
   fi
+
+  # Clear cache after backup to free up memory
+  rm -rf "$RESTIC_CACHE_DIR"/* 2>/dev/null || true
+  mkdir -p "$RESTIC_CACHE_DIR"
 
   # Unlock repository
   log "Unlocking repository after backup for $project"
@@ -212,9 +239,9 @@ for project in "${PROJECTS[@]}"; do
 
   sleep 2
 
-  # Apply retention policy
+  # Apply retention policy with timeout
   log "Applying retention policy for $project"
-  if ! "$RESTIC_BIN" forget \
+  if ! timeout -k 120 1800 "$RESTIC_BIN" forget \
         --tag "$project" \
         --tag "$SERVER_ID" \
         --keep-daily "$KEEP_DAILY" \
@@ -228,6 +255,10 @@ for project in "${PROJECTS[@]}"; do
   fi
 
   log "-- Completed $project"
+  
+  # Release memory between project backups
+  sync
+  sleep 5
 done
 
 # Finalize backup process
