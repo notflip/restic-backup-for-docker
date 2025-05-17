@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Load env
-source .restic.env
+source restic.env
 
 # Export required variables
 export RESTIC_REPOSITORY
