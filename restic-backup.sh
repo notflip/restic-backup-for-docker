@@ -34,6 +34,9 @@ fi
 echo "Starting restic backup of: $BACKUP_PATHS"
 restic backup $BACKUP_PATHS
 
+echo "Removing stale lock (if any)..."
+restic unlock
+
 echo "Forgetting old snapshots (keep 7 daily, 4 weekly)..."
 restic forget \
   --keep-daily 7 \
