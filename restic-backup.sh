@@ -18,7 +18,6 @@ export AWS_SECRET_ACCESS_KEY
 # On failure, ping /fail
 function on_failure {
   echo "Backup failed."
-
   if [ -n "${HEALTHCHECK_URL:-}" ]; then
     timeout 5 curl -fsS --retry 2 --max-time 3 "${HEALTHCHECK_URL}/fail" > /dev/null || echo "Healthcheck ping failed (timeout or error)"
   fi
@@ -31,12 +30,16 @@ if ! command -v restic >/dev/null 2>&1; then
   exit 1
 fi
 
+echo "Using repository: $RESTIC_REPOSITORY"
+restic cat config | grep -E 'repository|id|version' || echo "Warning: couldn't read repo config"
+
+# Unlock before starting
+echo "Removing stale lock (if any)..."
+restic unlock
+
 # Perform backup
 echo "Starting restic backup of: $BACKUP_PATHS"
 restic backup $BACKUP_PATHS
-
-echo "Removing stale lock (if any)..."
-restic unlock
 
 echo "Forgetting old snapshots (keep 7 daily, 4 weekly)..."
 restic forget \
