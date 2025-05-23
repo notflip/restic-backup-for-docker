@@ -18,8 +18,9 @@ export AWS_SECRET_ACCESS_KEY
 # On failure, ping /fail
 function on_failure {
   echo "Backup failed."
+
   if [ -n "${HEALTHCHECK_URL:-}" ]; then
-    curl -fsS --retry 3 "${HEALTHCHECK_URL}/fail" > /dev/null || true
+    timeout 5 curl -fsS --retry 2 --max-time 3 "${HEALTHCHECK_URL}/fail" > /dev/null || echo "Healthcheck ping failed (timeout or error)"
   fi
 }
 trap on_failure ERR
