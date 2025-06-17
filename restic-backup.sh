@@ -15,6 +15,10 @@ export RESTIC_PASSWORD
 export AWS_ACCESS_KEY_ID
 export AWS_SECRET_ACCESS_KEY
 
+# limit Go’s heap to ~2 GiB
+export GOMEMLIMIT=2GiB
+RESTIC_CACHE_MAX_ENTRIES=200000
+
 # On failure, ping /fail
 function on_failure {
   echo "Backup failed."
@@ -46,6 +50,7 @@ echo "Forgetting old snapshots (keep 7 daily, 4 weekly)..."
   --keep-daily 7 \
   --keep-weekly 4 \
   --prune
+  -o cache_max_entries=$RESTIC_CACHE_MAX_ENTRIES
 
 # Ping healthchecks success
 if [ -n "${HEALTHCHECK_URL:-}" ]; then
