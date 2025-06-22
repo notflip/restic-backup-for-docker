@@ -50,8 +50,6 @@ echo "Forgetting old snapshots (keep 7 daily, 4 weekly)..."
   --keep-daily 7 \
   --keep-weekly 4 \
   --prune
-  -o cache_max_entries=$RESTIC_CACHE_MAX_ENTRIES
-
 # Ping healthchecks success
 if [ -n "${HEALTHCHECK_URL:-}" ]; then
   curl -fsS --retry 3 "$HEALTHCHECK_URL" > /dev/null || true
