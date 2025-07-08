@@ -29,24 +29,24 @@ function on_failure {
 trap on_failure ERR
 
 # Check restic
-if [ ! -x /usr/local/bin/restic  ]; then
-  echo "Restic is not installed at /usr/local/bin/restic."
+if [ ! -x /usr/bin/restic  ]; then
+  echo "Restic is not installed at /usr/bin/restic."
   exit 1
 fi
 
 echo "Using repository: $RESTIC_REPOSITORY"
-/usr/local/bin/restic cat config | grep -E 'repository|id|version' || echo "Warning: couldn't read repo config"
+/usr/bin/restic cat config | grep -E 'repository|id|version' || echo "Warning: couldn't read repo config"
 
 # Unlock before starting
 echo "Removing stale lock (if any)..."
-/usr/local/bin/restic unlock
+/usr/bin/restic unlock
 
 # Perform backup
 echo "Starting restic backup of: $BACKUP_PATHS"
-/usr/local/bin/restic backup $BACKUP_PATHS
+/usr/bin/restic backup $BACKUP_PATHS
 
 echo "Forgetting old snapshots (keep 7 daily, 4 weekly)..."
-/usr/local/bin/restic forget \
+/usr/bin/restic forget \
   --keep-daily 7 \
   --keep-weekly 4 \
   --prune
